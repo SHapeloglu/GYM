@@ -34,3 +34,4 @@ Thumbs.db
 # Secrets
 *.key
 *.pem
+deploy/config/prod.env

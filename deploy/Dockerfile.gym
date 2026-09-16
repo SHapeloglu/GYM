@@ -1,0 +1,2 @@
+FROM docker.io/wger/server:latest
+RUN pip install --no-cache-dir --break-system-packages iyzipay
