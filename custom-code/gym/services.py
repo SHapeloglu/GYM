@@ -21,6 +21,8 @@ Kullanım:
     # payment: yeni oluşturulan Payment kaydı (status='pending')
     # checkout_info: {'checkoutFormContent': ..., 'paymentPageUrl': ..., 'token': ...}
 """
+import hashlib
+import hmac
 import logging
 import uuid
 from decimal import Decimal
@@ -206,13 +208,86 @@ class PaymentService:
         }
 
     @classmethod
-    def handle_webhook(cls, payload, signature=None):
+    def handle_webhook(cls, payload, signature_header):
         """
-        İskelet — Sprint 2'nin sonraki adımı. Henüz implement edilmedi.
-        Buraya dokunmadan önce iyzico'nun imza doğrulama şemasını resmi
-        dokümantasyondan teyit et.
+        iyzico'dan gelen webhook'u isler. HPP (CheckoutForm) formati
+        varsayilir, cunku create_checkout CheckoutFormInitialize kullaniyor.
+
+        Resmi sema (docs.iyzico.com/en/advanced/webhook, HPP format):
+            key = SECRET_KEY + iyziEventType + iyziPaymentId + token
+                  + paymentConversationId + status
+            signature = HEX(HMAC_SHA256(key, SECRET_KEY))
+        X-Iyz-Signature ve X-Iyz-Signature-V2 artik desteklenmiyor, sadece
+        X-IYZ-SIGNATURE-V3 kullanilmali.
+
+        ONEMLI: X-IYZ-SIGNATURE-V3 gonderimi hesapta varsayilan olarak KAPALI.
+        Sandbox/prod hesabinda aktif etmek icin entegrasyon@iyzico.com ile
+        iletisime gecilmesi gerekiyor (bkz. iyzico resmi dokumantasyonu).
+
+        Args:
+            payload: webhook body'sinin parse edilmis hali (dict).
+            signature_header: X-IYZ-SIGNATURE-V3 header degeri.
+
+        Returns:
+            Guncellenen Payment kaydi.
+
+        Raises:
+            PaymentServiceError: imza dogrulanamazsa veya eslesen Payment
+                bulunamazsa.
         """
-        raise NotImplementedError('Webhook handling Sprint 2 sonraki adımda implement edilecek.')
+        if not cls._verify_webhook_signature(payload, signature_header):
+            logger.warning(
+                'iyzico webhook imza dogrulamasi basarisiz. paymentConversationId=%s',
+                payload.get('paymentConversationId'),
+            )
+            raise PaymentServiceError('Gecersiz webhook imzasi.')
+
+        conversation_id = payload.get('paymentConversationId')
+        iyzico_status = payload.get('status')
+
+        try:
+            payment = Payment.objects.get(transaction_id=conversation_id)
+        except Payment.DoesNotExist as exc:
+            raise PaymentServiceError(
+                f'Webhook icin eslesen Payment bulunamadi: paymentConversationId={conversation_id}'
+            ) from exc
+
+        payment.raw_response = {**(payment.raw_response or {}), 'webhook': payload}
+
+        if iyzico_status == 'SUCCESS':
+            payment.status = Payment.Status.COMPLETED
+            membership = payment.membership
+            membership.status = 'active'
+            membership.save(update_fields=['status'])
+        elif iyzico_status == 'FAILURE':
+            payment.status = Payment.Status.FAILED
+
+        payment.save()
+        logger.info(
+            'iyzico webhook islendi: payment_id=%s, status=%s', payment.id, payment.status
+        )
+        return payment
+
+    @classmethod
+    def _verify_webhook_signature(cls, payload, signature_header):
+        """
+        HPP format imza dogrulamasi. Mock modda (secret key yokken) hicbir
+        imza guvenilir sayilmaz — her zaman False doner.
+        """
+        if cls.is_mock_mode() or not signature_header:
+            return False
+
+        secret_key = settings.IYZICO_SECRET_KEY
+        key = (
+            secret_key
+            + str(payload.get('iyziEventType', ''))
+            + str(payload.get('iyziPaymentId', ''))
+            + str(payload.get('token', ''))
+            + str(payload.get('paymentConversationId', ''))
+            + str(payload.get('status', ''))
+        )
+        computed = hmac.new(secret_key.encode('utf-8'), key.encode('utf-8'), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(computed, signature_header)
 
     @classmethod
     def refund(cls, payment):

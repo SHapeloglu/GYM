@@ -92,6 +92,30 @@ class PaymentViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def webhook(self, request):
+        """
+        POST /api/v2/gym/payments/webhook/
+
+        iyzico'dan gelen server-to-server webhook bildirimini isler.
+        AllowAny: iyzico bizim auth token'imizi bilmiyor, guvenlik
+        X-IYZ-SIGNATURE-V3 header imza dogrulamasiyla saglanir (bkz.
+        PaymentService._verify_webhook_signature).
+
+        iyzico 2xx disinda bir yanit alirsa 15 dakikada bir, 3 deneme
+        boyunca tekrar gonderir. Bu yuzden dogrulama/eslesme hatalarinda
+        bile 2xx donmek yerine gercek hata kodu donuyoruz — boylece iyzico
+        tekrar dener ve gecici bir DB/agac hatasi kaybolmaz.
+        """
+        signature_header = request.headers.get('X-Iyz-Signature-V3') or request.headers.get('X-IYZ-SIGNATURE-V3')
+
+        try:
+            payment = PaymentService.handle_webhook(request.data, signature_header)
+        except PaymentServiceError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'payment': {'id': payment.id, 'status': payment.status}}, status=status.HTTP_200_OK)
+
 class GymClassViewSet(viewsets.ModelViewSet):
     queryset = GymClass.objects.filter(is_active=True)
     serializer_class = GymClassSerializer
