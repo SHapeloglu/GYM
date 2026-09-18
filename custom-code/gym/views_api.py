@@ -1,9 +1,10 @@
 from django.db.models import Sum
 from django.utils import timezone
-from rest_framework import permissions, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import ClassEnrollment, GymClass, Membership, Package, Payment
+from .services import PaymentService, PaymentServiceError
 from .serializers import (
     ClassEnrollmentSerializer,
     GymClassSerializer,
@@ -40,6 +41,56 @@ class PaymentViewSet(viewsets.ModelViewSet):
         if user.is_staff:
             return Payment.objects.all()
         return Payment.objects.filter(membership__user=user)
+
+    @action(detail=False, methods=['post'])
+    def checkout(self, request):
+        """
+        POST /api/v2/gym/payments/checkout/
+        Body: {"membership": <id>}
+
+        Verilen membership icin iyzico checkout baslatir. IYZICO_API_KEY
+        tanimli degilse PaymentService otomatik mock modda calisir (bkz.
+        services.py). Basarili yanitta 'payment' (Payment kaydinin id/status'u)
+        ve 'checkout' (iyzico'nun checkoutFormContent/paymentPageUrl/token
+        alanlari) doner.
+        """
+        membership_id = request.data.get('membership')
+        if not membership_id:
+            return Response(
+                {'membership': ['Bu alan zorunludur.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            membership = Membership.objects.get(id=membership_id)
+        except Membership.DoesNotExist:
+            return Response(
+                {'membership': ['Boyle bir membership bulunamadi.']},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user = request.user
+        if not user.is_staff and membership.user_id != user.id:
+            return Response(
+                {'detail': 'Bu membership size ait degil.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            payment, checkout_info = PaymentService.create_checkout(membership)
+        except PaymentServiceError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                'payment': {'id': payment.id, 'status': payment.status, 'amount': str(payment.amount)},
+                'checkout': checkout_info,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 class GymClassViewSet(viewsets.ModelViewSet):
     queryset = GymClass.objects.filter(is_active=True)
