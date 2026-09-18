@@ -416,6 +416,16 @@ if USE_S3_MEDIA_FILES or USE_S3_STATIC_FILES:
         if env.bool('USE_S3_URL_FOR_STATIC', True):
             STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 
+# --- Custom: iyzico payment settings (Sprint 2) ---
+# Tanımlı değillerse wger.gym.services.PaymentService otomatik MOCK modda
+# çalışır (bkz. SPRINT2_INFRASTRUCTURE_MIGRATION.md ve services.py docstring).
+# Sandbox hesabı açılınca bu üçü prod.env'e eklenip container yeniden
+# başlatılmalı; kodda başka hiçbir değişiklik gerekmez.
+IYZICO_API_KEY = env.str('IYZICO_API_KEY', default='')
+IYZICO_SECRET_KEY = env.str('IYZICO_SECRET_KEY', default='')
+IYZICO_BASE_URL = env.str('IYZICO_BASE_URL', default='https://sandbox-api.iyzipay.com')
+IYZICO_CALLBACK_URL = env.str('IYZICO_CALLBACK_URL', default='')
+
 # --- Custom: gym app API routes (see wger/gym/custom_urls.py) ---
 # Wraps ROOT_URLCONF instead of editing wger/urls.py directly, so upstream
 # image updates to urls.py are not silently shadowed by a bind mount.
