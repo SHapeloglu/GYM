@@ -230,13 +230,32 @@ status güncelle (completed/failed) + Membership.status senkronize et
 **Önemli mimari kararlar (netleştirilmesi gerekenler):**
 - Webhook endpoint'i kullanıcı auth'u gerektirmemeli (iyzico bizim
   token'ımızı bilmiyor) — `permission_classes = [AllowAny]` + iyzico'nun
-  kendi imza mekanizmasıyla güvenlik sağlanmalı.
+  kendi imza mekanizmasıyla güvenlik sağlanmalı. **İmplement edildi ve
+  doğrulandı** (18 Eylül 2026) — `PaymentService.handle_webhook()` +
+  `PaymentViewSet.webhook` action'ı. Gerçek şema, resmi iyzico
+  dokümantasyonundan (docs.iyzico.com/en/advanced/webhook) teyit edildi:
+  **HMAC-SHA256** (HMAC-SHA1 değil — önceki taslakta belirsizdi),
+  `X-IYZ-SIGNATURE-V3` header'ı, HPP (CheckoutForm) formatı için
+  `key = SECRET_KEY + iyziEventType + iyziPaymentId + token +
+  paymentConversationId + status`, sonuç HEX ile encode edilir.
+  `X-Iyz-Signature` ve `X-Iyz-Signature-V2` artık desteklenmiyor.
+  ⚠️ **Kritik ön koşul:** `X-IYZ-SIGNATURE-V3` gönderimi hesapta
+  varsayılan olarak KAPALI — sandbox/prod hesabında aktif etmek için
+  `entegrasyon@iyzico.com` ile iletişime geçilmesi gerekiyor. Sandbox
+  hesabı açılınca bu adım unutulmamalı, aksi halde webhook hiç imza
+  header'ı almaz ve `PaymentService._verify_webhook_signature` her
+  zaman `False` döner (mock modda zaten kasıtlı olarak hep `False`
+  döner — bkz. services.py).
 - Webhook işleme muhtemelen Celery'ye taşınmalı (Backlog Story 2'de
   belirtildiği gibi) — bu durumda `celery_worker` servisinin de
-  `Dockerfile.gym` ile build edilmesi gerekecek (şu an sadece `web`
-  bu image'ı kullanıyor, bkz. INFRASTRUCTURE.md §4).
+  `Dockerfile.gym` ile build edilmesi gerekecek. **Bu adım tamamlandı**
+  (bkz. SPRINT2_INFRASTRUCTURE_MIGRATION.md) — `celery_worker` ve
+  `celery_beat` artık `Dockerfile.gym` ile build ediliyor, `iyzipay`
+  import edilebiliyor.
 - `Payment.raw_response` alanı zaten JSON tipinde ve bu amaç için
-  ayrılmış — iyzico'nun tam yanıtı buraya yazılabilir.
+  ayrılmış — iyzico'nun tam yanıtı buraya yazılabilir. **İmplement
+  edildi** — hem checkout hem webhook yanıtları parse edilmeden
+  olduğu gibi bu alana yazılıyor.
 
 ---
 
